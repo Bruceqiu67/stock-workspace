@@ -1,0 +1,16 @@
+# 本地环境文件
+.env
+*.env
+.env.local
+
+# 运行时数据（含个人持仓与市场快照，不入库）
+data/
+
+# 缓存与日志
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+
+# 临时文件
+/tmp/
