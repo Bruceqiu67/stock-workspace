@@ -32,14 +32,29 @@ stock-workspace/
 │   ├── serenity-perspective/         ← 风格层：Serenity 股神思维框架
 │   └── muxuuu-serenity-skill/        ← 方法论层：供应链瓶颈研究 + 证据标准
 └── scripts/
+    ├── scoring_engine.py             ← 核心层：确定性打分引擎 (0.4技术+0.4产业+0.2催化)
+    ├── market_state.py               ← 核心层：市场状态机与仲裁总线 (NORMAL/PANIC/REBOUND)
+    ├── prediction_tracker.py         ← 核心层：预判追踪与错误归因引擎 (recap+多维复盘)
+    ├── test_core_engine.py           ← 核心层：自动化单元测试套件 (7/7 tests pass)
+    ├── candidate_scanner.py          ← 候选池扫描与打分 (多线程并发抓取30日日K+硬过滤+TOP10)
     ├── portfolio_monitor.py          ← 持仓监控（PORTFOLIO 为示例数据，使用前替换）
-    ├── candidate_scanner.py          ← 候选池扫描（CANDIDATES 为示例方向池）
     ├── market_snapshot.py            ← 收盘数据快照（指数+热股情绪代理）
     ├── premarket_collector.py        ← 盘前外围数据采集
     ├── candidate_refresh_state.py    ← 候选池刷新状态记录
     ├── xuji_stop_drop_monitor.py     ← 个股止跌信号监控示例
     └── robotics_monitor.sh           ← 板块三股监控示例（buy/stop 为占位）
 ```
+
+## 核心量化层设计 (Core Layer Architecture)
+
+为了彻底消除大模型在数值计算、均线对比与加权得分上的心算幻觉与随机漂移，系统采用 **「定性归 LLM，定量归 Python」** 的解耦架构：
+
+1. **定性分析 (LLM)**：负责提炼宏观事件、产业“卡脖子”瓶颈层稀缺度与商业护城河逻辑。
+2. **定量计算 (Python Engine)**：
+   - **确定性打分 (`scoring_engine.py`)**：纯数学计算 52周位置、20日缩量比率、MA5/10/20 排列、5日动量、5日振幅收敛度与大单净流入。
+   - **动态状态机 (`market_state.py`)**：识别当前宏观状态（`NORMAL_OSCILLATION` / `PANIC_DOWNTREND` / `REBOUND_RIGHT_SIDE`），在恐慌市自动将技术/风控权重提高至 60%，并强制执行企稳三条件一票否决。
+   - **预判复盘闭环 (`prediction_tracker.py`)**：每日 16:00 记录标准化预判，次日按方向(50分)+区间(30分)+情景(20分)自动化评分并输出偏差归因。
+   - **高性能并发 K 线管道 (`candidate_scanner.py`)**：基于 `ThreadPoolExecutor` 并发获取候选池标的 30 日前复权日 K 线（38 只候选 < 0.4s），实现毫秒级量化扫描。
 
 ## 7 大场景
 

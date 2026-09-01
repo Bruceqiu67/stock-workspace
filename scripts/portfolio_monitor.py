@@ -7,6 +7,10 @@ import json, os, subprocess, sys
 from datetime import date, datetime
 from pathlib import Path
 
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 DATA_DIR = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "data" / "portfolio"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 

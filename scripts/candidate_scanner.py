@@ -7,6 +7,20 @@ import json, os, subprocess, sys, re
 from datetime import date, datetime
 from pathlib import Path
 
+# 兼容 Windows 终端 UTF-8 输出
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+# 引入同级核心层模块
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from scoring_engine import calculate_combined_score
+    from market_state import load_latest_market_state
+except ImportError:
+    calculate_combined_score = None
+    load_latest_market_state = None
+
 DATA_DIR = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "data" / "candidates"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -143,6 +157,42 @@ def fetch_all(codes):
     return results
 
 
+def fetch_single_kline(code_full):
+    """获取单只股票近30日K线"""
+    import urllib.request
+    url = f"http://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={code_full},day,,,30,qfq"
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=8)
+        data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        raw_kl = data.get("data", {}).get(code_full, {}).get("qfqday", data.get("data", {}).get(code_full, {}).get("day", []))
+        klines = []
+        for row in raw_kl:
+            if len(row) >= 6:
+                klines.append({
+                    "date": row[0],
+                    "open": float(row[1]),
+                    "close": float(row[2]),
+                    "high": float(row[3]),
+                    "low": float(row[4]),
+                    "volume": float(row[5])
+                })
+        return code_full, klines
+    except Exception:
+        return code_full, []
+
+
+def fetch_all_klines(codes):
+    """并发批量获取K线"""
+    from concurrent.futures import ThreadPoolExecutor
+    kline_map = {}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        results = executor.map(fetch_single_kline, codes)
+        for code, kl in results:
+            kline_map[code] = kl
+    return kline_map
+
+
 def main():
     today = date.today().isoformat()
 
@@ -155,6 +205,12 @@ def main():
 
     quotes = fetch_all(all_codes)
     print(f"   行情获取: {len(quotes)}/{len(all_codes)} 成功")
+
+    # 获取市场宏观状态
+    mkt_state = load_latest_market_state() if load_latest_market_state else {}
+    regime = mkt_state.get("regime", "NORMAL_OSCILLATION")
+    tone = mkt_state.get("strategy_tone", "")
+    weights = mkt_state.get("weights", {"technical": 0.40, "industry": 0.40, "catalyst": 0.20})
 
     # 运行硬过滤
     passed = []
@@ -182,7 +238,7 @@ def main():
 
         # 通过过滤
         sectors = CODE_TO_SECTORS.get(code_full, ["未知"])
-        passed.append({
+        cand_item = {
             "code": code_full,
             "name": q["name"],
             "price": price,
@@ -192,13 +248,47 @@ def main():
             "amount_wan": q["amount_wan"],
             "sectors": sectors,
             "primary_sector": sectors[0] if sectors else "未知",
-        })
+        }
+        passed.append(cand_item)
 
-    # 按方向分组输出
-    print(f"\n   通过过滤: {len(passed)} 只")
-    print(f"   价格超标: {len(filtered_out['price'])} 只")
-    print(f"   位置过高: {len(filtered_out['position'])} 只")
-    print(f"   数据缺失: {len(filtered_out['no_data'])} 只")
+    # 批量并发拉取通过标的的K线以进行真实技术打分
+    passed_codes = [c["code"] for c in passed]
+    kline_map = fetch_all_klines(passed_codes)
+
+    # 运行确定性评分引擎
+    for cand_item in passed:
+        c_code = cand_item["code"]
+        c_klines = kline_map.get(c_code, [])
+        if calculate_combined_score:
+            score_res = calculate_combined_score(cand_item, klines=c_klines, weights=weights)
+            cand_item["combined_score"] = score_res["combined_score"]
+            cand_item["action_label"] = score_res["action_label"]
+            cand_item["scores"] = score_res["scores"]
+            cand_item["signals"] = score_res["signals"]
+            cand_item["tech_details"] = score_res.get("details", {}).get("tech_details", {})
+        else:
+            cand_item["combined_score"] = 3.0
+            cand_item["action_label"] = "NEUTRAL_OBSERVE"
+            cand_item["scores"] = {}
+            cand_item["signals"] = []
+
+    # 按综合评分降序排列
+    passed.sort(key=lambda x: x.get("combined_score", 0), reverse=True)
+
+    # 输出统计与状态
+    print(f"\n   宏观市场状态: {regime}")
+    if tone:
+        print(f"   基调指引: {tone}")
+    print(f"   通过过滤: {len(passed)} 只 | 价格超标: {len(filtered_out['price'])} | 位置过高: {len(filtered_out['position'])} | 数据缺失: {len(filtered_out['no_data'])}")
+
+    # 输出 TOP 10 综合评分榜单
+    print(f"\n🏆 候选池综合打分 TOP 10 (0.4技术 + 0.4产业 + 0.2催化):")
+    print(f"   {'排名':4s} {'代码':8s} {'名称':8s} {'现价':8s} {'涨跌幅':8s} {'52w位置':8s} {'综合分':6s} {'操作评级':18s} {'核心特征'}")
+    print("   " + "-" * 85)
+    for idx, c in enumerate(passed[:10], 1):
+        rp = f"{c['rel_position_52w']:.0f}%" if c['rel_position_52w'] is not None else "?"
+        sig = " | ".join(c.get("signals", [])[:2])
+        print(f"   #{idx:<3d} {c['code']:8s} {c['name']:8s} ¥{c['price']:<7.2f} {c['change_pct']:+6.2f}% {rp:>7s} {c.get('combined_score',0):>6.2f} {c.get('action_label',''):18s} {sig}")
 
     # 按方向分组
     by_sector = {}
@@ -206,17 +296,11 @@ def main():
         for s in c["sectors"]:
             by_sector.setdefault(s, []).append(c)
 
-    for sector in sorted(by_sector.keys()):
-        stocks = by_sector[sector]
-        print(f"\n   {sector} ({len(stocks)} 只):")
-        for s in sorted(stocks, key=lambda x: x["rel_position_52w"] or 999)[:5]:
-            rp = f"位置{s['rel_position_52w']:.0f}%" if s["rel_position_52w"] is not None else "位置?"
-            print(f"     {s['name']:8s} ¥{s['price']:<6.2f} {s['change_pct']:+.2f}% {rp}")
-
     # 保存
     output = {
         "date": today,
         "captured_at": datetime.now().isoformat(timespec="minutes"),
+        "market_state": mkt_state,
         "total": len(all_codes),
         "fetched": len(quotes),
         "passed": len(passed),
@@ -232,7 +316,7 @@ def main():
     out_path = DATA_DIR / f"{today}.json"
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
-    print(f"\n✅ 候选池已保存: {out_path}")
+    print(f"\n✅ 候选池与评分结果已落盘: {out_path}")
 
     # 退出码：没合格候选 = 异常
     if not passed:
@@ -242,3 +326,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

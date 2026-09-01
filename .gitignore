@@ -14,3 +14,7 @@ __pycache__/
 
 # 临时文件
 /tmp/
+
+# 本地专属知识图谱与开发日志（不入库、不推送远端）
+DEVELOPMENT_LOG.md
+PROJECT_KNOWLEDGE_GRAPH.md

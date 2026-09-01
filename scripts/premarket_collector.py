@@ -7,6 +7,10 @@ import json, os, subprocess, sys, re
 from datetime import date, datetime
 from pathlib import Path
 
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 DATA_DIR = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "data" / "premarket"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -135,7 +139,7 @@ def main():
         yesterday = (date.today() - timedelta(days=1)).isoformat()
         snap_path = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "data" / "market_snapshots" / f"{yesterday}.json"
     if snap_path.exists():
-        with open(snap_path) as f:
+        with open(snap_path, "r", encoding="utf-8") as f:
             snap = json.load(f)
             data["a_share_yesterday"] = {
                 "date": snap.get("date"),
