@@ -1,12 +1,17 @@
-# 复盘错误分类（tracker.py report --by-type）
+# 复盘错误分类（prediction_tracker.py report --by-type）
 
 > 2026-07-13 实现
 
 ## 基础逻辑
 
 ```python
+# 优先使用记录中的结构化 direction_label；缺失时才按关键词分类
 classify_prediction(base_scenario) → "偏多" / "偏空" / "震荡" / "弱反弹" / "未分类"
 ```
+
+> 复盘评分口径见 `prediction-tracking-workflow.md` 的 RUBRIC_VERSION=2.0：
+> 方向 50 + 区间 30（缺失记 N/A）+ 情景 20（Brier，概率和必须=100）。
+> 方向误差阈值 0.5%，震荡阈值 1.5%。
 
 从 `base_scenario` 文本中按关键词归类：
 
@@ -33,7 +38,7 @@ classify_prediction(base_scenario) → "偏多" / "偏空" / "震荡" / "弱反�
 ## 用法
 
 ```bash
-python3 ~/.hermes/data/predictions/tracker.py report --by-type
+python3 ~/.hermes/scripts/prediction_tracker.py report --by-type
 ```
 
 ## 输出示例

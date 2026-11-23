@@ -1,7 +1,7 @@
 # 三框架分析体系 · 架构总览
 
 > 整理日期：2026-08-18
-> 定位：本文件是**体系说明文档**，不参与 skill 加载，现有 4 个 skill 均未改动。
+> 定位：本文件是**体系说明文档**，不参与 skill 加载；只描述思考层、数据流与体系架构，不展开触发/调度/交付/运维细节。
 > 目的：一张图说清"三框架体系是什么、由谁组成、怎么触发、数据怎么流、7 大场景怎么路由"。
 > 权威来源：各 skill 的 SKILL.md 与 references 文件。本文档如有与 skill 内容冲突之处，以 skill 为准。
 
@@ -14,7 +14,7 @@
 | 层级 | Skill（目录名） | 定位 | 核心职责 | 典型内容 |
 |------|----------------|------|---------|---------|
 | **指挥中心** | `three-framework-analyst` | 封装层 | 定义数据源优先级、7 大场景路由、调用顺序、数据流、cron 调度 | scenarios.md / daily-schedule.md / prediction-system.md / data-sources.md |
-| **执行层** | `mi-skill` | 资金流+技术确认 | 四维资金流分析（市场环境→板块轮动→个股行为→技术确认）、买卖点、止损纪律、165 条技术规则 | rules.md / dual-framework-analysis.md / eastmoney-api-patterns.md |
+| **执行层** | `mi-skill` | 资金流+技术确认 | 四维资金流分析（市场环境→板块轮动→个股行为→技术确认）、买卖点、止损纪律、140 条技术规则 | rules.md / dual-framework-analysis.md / eastmoney-api-patterns.md |
 | **风格层** | `serenity-perspective` | 产业链+机构视角 | 产业链"卡脖子"环节识别、机构行为解码、长线价值判断、估值重置框架 | 心智模型 / 决策启发式 / 表达 DNA |
 | **方法论层** | `muxuuu-serenity-skill` | 供应链瓶颈研究法 | 系统化研究工作流：市场叙事→系统变化→稀缺层→证据分级→排序；证据标准与跨市场数据源路径 | evidence-ladder.md / market-source-playbook.md / deep-research-workflow.md |
 
@@ -57,9 +57,10 @@ Level 1: 本地数据缓存  (~/.hermes/data/)
   ├── market_snapshots/YYYY-MM-DD.json     — 指数+热股快照
   ├── portfolio/current.json                — 持仓实时状态（每次运行被覆盖）
   ├── premarket/YYYY-MM-DD.json             — 盘前外围数据
-  ├── candidates/YYYY-MM-DD.json            — 当日候选池
-  ├── predictions/daily/YYYY-MM-DD.json     — 历史预判记录
-  └── predictions/                          — tracker.py 复盘数据
+  ├── candidates/YYYY-MM-DD.json            — 当日候选池（含 universe 分层与选择偏差标记）
+  ├── candidate_universe.json               — 全市场股票宇宙（可选；缺失时扫描仅覆盖观察池）
+  ├── predictions/daily/YYYY-MM-DD.json     — 历史预判记录（target_date/schema_version/rubric_version）
+  └── predictions/                          — prediction_tracker.py 的 review/report 数据
 
 Level 2: MCP 工具 (mcp-eastmoney)
   ├── sector_fund_flow(kind="industry")      → 行业板块排行+资金流向
@@ -103,7 +104,8 @@ Step 2  资金流验证（mi-skill）
         → 四维分析：市场环境 → 板块轮动 → 个股行为 → 技术确认
 Step 3  技术确认（mi-skill）
         → 周线定方向，日线找买点；让主力先动
-        → 先过三道硬过滤门（绝对价格 / 90日相对位置 / 均线排列）
+        → 先过三道硬过滤门（绝对价格 / 52周相对位置 / MA5/10/20/60 + 周线排列）
+        → 日K至少 120 根（目标 250 根），周K至少 20 根；窗口不足标记 degraded
 Step 4  综合输出
         → Serenity 产业链结论 → 资金流验证 → 技术买卖点 → 综合操作建议
 ```
@@ -113,19 +115,105 @@ Step 4  综合输出
 | 状态 | 特征 | 策略基调 |
 |:----|:-----|:--------|
 | **正常/震荡** | 上证在20日线上方，单日振幅<2% | 正常轮动，选方向做个股 |
-| **恐慌/趋势下行** | 连续2天放量下跌，创业板单日-5%+，候选池90%飘绿 | 守为主，不做新开仓，等缩量止跌 |
-| **反弹/右侧启动** | 缩量见底后放量阳线，板块普涨 | 优先加仓持仓中相对强势的个股 |
+| **恐慌/趋势下行** | 连续2天放量下跌，或创业板单日-5%+，或上证-2%+且候选池收红率≤20%，或市场宽度极弱 | 守为主，不做新开仓，等缩量止跌 |
+| **反弹/右侧启动** | 指数仍在MA20下方，单日上证+1.5%/创业板+2.5%，候选池收红率≥70% | 优先加仓持仓中相对强势的个股 |
+| **未知/数据不足** | 指数、MA20、候选池广度或量能关键输入缺失/过期 | 不输出方向性开仓结论，只列数据缺口与观察项 |
 
-恐慌模式下：不找进场点只盯企稳信号；相对强度 > 绝对涨跌；不机械执行止损线（"两头挨打"比"不止损"更危险）。
+状态机实现（`scripts/market_state.py`）的硬性约定：
+
+- 关键输入缺失时返回 `UNKNOWN`，**绝不默认正常**；输出必须携带 `as_of`、`data_completeness`、`stale`、`missing_inputs`。
+- 反弹判定真实读取指数 K 线计算 `above_ma20`，不再因未传 `klines_sh` 而永远不可达。
+- 候选池广度来自**当日行情**，不复用上一次候选文件。
+- 市场宽度由 `market_snapshot.py` 采集全 A 股涨跌家数、涨停/跌停/炸板、中位数涨幅、总成交额，并输出 0-100 情绪分；状态机在 `上涨占比≤20%且跌停≥30家` 或 `情绪分≤20且上涨占比≤25%` 时判为恐慌。宽度缺失时明确标注，不用热股代理替代。
+- 恐慌模式下：不找进场点只盯企稳信号；相对强度 > 绝对涨跌；不机械执行止损线（"两头挨打"比"不止损"更危险）。
+- 企稳三条件由 `check_stabilization()` 逐项计算（缩量、不创新低、站上MA5），未通过则抑制买入标签。
+
+### 4.2.1 三框架冲突裁决协议
+
+`scripts/arbitration.py` 把“产业逻辑 vs 技术确认”的分歧转成可执行裁决：
+
+| 市场状态 | 优先级 | 典型裁决 |
+|:--|:--|:--|
+| 恐慌 | 风控一票否决 | 未企稳 → `DEFEND_NO_NEW_BUY`；企稳但技术弱 → `HOLD_ONLY_RELATIVE_STRENGTH` |
+| 正常 | 产业准入、技术择时 | 产业多/技术破位 → `WATCH_WAIT_TECH_REPAIR`；共振 → `BUY_ON_PULLBACK` |
+| 反弹 | 相对强度优先 | 候选池前1/3 → `ADD_RELATIVE_STRENGTH`；否则 `WAIT_CONFIRMATION` |
+| 未知 | 不动作 | `NO_DIRECTIONAL_ACTION` |
+
+输出固定包含 `conflict_type / decision / priority / basis / evidence_needed / confidence`，
+并随候选池 JSON 落盘，供复盘统计。
 
 ### 4.3 操作建议输出规范
 
+操作层由 `scripts/output_contract.py` 生成，统一字段：
+
 ```
-入场区间 / 止损线 / 目标价 / 仓位建议 / 时间窗口
+entry_zone / stop / target_1 / target_2 / position_size /
+invalidation / valid_until / confidence / research_rating / trade_action
 ```
-- 止损是铁律，给出明确止损位
-- 仓位建议要具体（如"≤1成"、"半仓"），不模糊
-- 区分短线博弈与中线配置，不混淆
+
+- `research_rating` 是研究排序结论（可买观察/观察）；`trade_action` 才是可执行动作。
+  非可排名、数据过期、恐慌未企稳、方向淘汰、仲裁否决时 `trade_action=NO_TRADE`，
+  仓位为 0。
+- 止损由 ATR、近 20 日低点与 MA20 推导，必须满足
+  `stop < entry_low <= entry_high < target_1 < target_2`。
+- 仓位由单笔风险预算 0.5% / 止损距离得到，再受单票 15% 与组合层目标权重约束；
+  市场状态乘数为正常 1.0、反弹 0.9、恐慌 0.3、未知 0。
+- 有效期默认 5 个交易日，按交易日历顺延；失效条件必须可观察（跌破止损、未站稳
+  入场区上沿、方向空头排列、数据过期等）。
+- 完整 schema 与示例见 `docs/output-contract.md`。
+
+### 4.4 过滤策略与方向级淘汰
+
+`scripts/filter_policy.py` 是价格/位置阈值的唯一事实源：
+
+| 用途 | 价格硬上限 | 价格惩罚阈值 | 位置硬上限 | 位置惩罚阈值 |
+|:--|:--|:--|:--|:--|
+| 观察池 | 150 元 | 100 元（排序惩罚） | 70% | 60% |
+| 交易池 | 100 元 | 80 元（排序惩罚） | 70% | 60% |
+| 恐慌覆盖 | 同用途 | 同用途 | 60% | 50% |
+
+- 硬排除与排序惩罚分离：被惩罚标的保留在候选中，进入 `filtered.near_miss` 并扣排序分。
+- 方向级：方向内全部候选 `MA5<MA10<MA20` 时 `direction_veto`，买入标签改为
+  `OBSERVE_DIRECTION_BEARISH`，不进入组合。
+- 缺少全市场宇宙时仍标记 `watchlist_only/selection_bias_risk=high`，不把观察池排序
+  称为全市场选股。当前重点观察池为 39 只 / 9 个方向，权威来源是
+  `scripts/candidate_universe.py` 的 `WATCHLIST`。
+
+### 4.5 组合构建与风险预算
+
+`scripts/portfolio_construction.py` 在个股评分之上输出：
+
+- 按 regime 的总暴露：正常 80% / 反弹 70% / 恐慌 30% / 未知 0%。
+- 单票上限 15%、方向（相关性代理）上限 30%、最大持仓 8 只、最低分 50。
+- 目标权重、现金比例、方向权重、被丢弃原因、与当前持仓比较的
+  `ENTER/ADD/HOLD/REDUCE/EXIT` 调仓建议。
+- 候选快照未保存完整收益序列，因此“相关性”用同方向高相关代理
+  （`correlation_proxy=0.8`），并在输出中明确标注，不冒充精确相关系数。
+
+### 4.6 数据新鲜度、交易日历与解析适配器
+
+- `scripts/trading_calendar.py` 提供 `is_trading_day / previous_trading_day /
+  next_trading_day / freshness`；周一盘前读上一交易日（周五），不是日历昨天。
+- 扫描、市场状态、盘前、预判复盘统一输出 `as_of / data_age_days /
+  data_age_trading_days / freshness / expected_previous_trading_day`。
+- `freshness.status`：`fresh` / `previous_trading_day`（盘前读昨收，属预期）/
+  `stale` / `future` / `missing`；`stale=true` 时下游必须降级。
+- 候选评分的 K 线日期若早于上一交易日，直接 `scoring_status=degraded`、
+  `rankable=false`、`action_label=DATA_STALE`。
+- `scripts/market_data_adapter.py` 是腾讯/新浪行情与 K 线解析的唯一入口，
+  候选扫描、收盘快照、持仓监控、盘前采集、预判复盘都复用它。
+
+### 4.7 研究深度契约
+
+`scripts/research_depth.py` 把“快速扫描”与“深度研究”分档：
+
+| 模式 | 公司数 | 来源数 | 预算 | 可声明等级 |
+|:--|:--|:--|:--|:--|
+| `quick_scan` | 目标 8 | 目标 5 | ≤5 次取数 / 30 秒 | `initial_pass` |
+| `deep_research` | 最低 20 | 最低 25 | 独立预算 | `verified` |
+
+报告必须携带 `research_depth / evidence_coverage / claim_level / missing_evidence`；
+快速模式不得把结论写成“已验证”，并需列出待核实来源。
 
 ---
 
@@ -160,7 +248,7 @@ Step 4  综合输出
 |------|------|---------|---------|
 | 16:00 | `recap` | 明日走势（三情景+区间+观察点） | 下一交易日 16:00 复盘 |
 
-- **只有 16:00 收盘复盘记录预判**（`tracker.py record --type recap`）
+- **只有 16:00 收盘复盘记录预判**（`prediction_tracker.py record --type recap`）
 - 场景A（大盘分析）是纯信息报告，不做预判记录
 - 复盘时先做预判连续性检查：昨日无 recap 记录则标注"昨日无预判记录"，**绝不回退到更早日期的预判**（2026-07-21 曾因此复盘错位）
 
@@ -214,17 +302,26 @@ Step 4  综合输出
 
 ## 8. 关键文件索引
 
+### 核心量化层 scripts
+- `scoring_engine.py` / `scoring_config.py` — 确定性评分与单一事实源
+- `market_state.py` / `trading_calendar.py` — 状态机、交易日历与 freshness
+- `candidate_scanner.py` / `candidate_universe.py` — 候选扫描、宇宙分层
+- `filter_policy.py` / `portfolio_construction.py` / `output_contract.py` — 过滤、组合、操作契约
+- `analysis_context.py` / `market_data_adapter.py` — 输入契约与行情解析适配器
+- `prediction_tracker.py` / `forward_validation.py` / `arbitration.py` — 预判闭环、前瞻验证、冲突裁决
+- `research_depth.py` / `docs_consistency.py` — 研究深度契约、文档一致性 lint
+
 ### 指挥中心 three-framework-analyst
 - `references/scenarios.md` — 7 大场景完整工作流（A大盘分析/B方向选股/C持仓诊断/D3框架分析/E飞书报告/F预测复盘/G收盘复盘）
 - `references/daily-schedule.md` — 交易自动化时间线 + 预判体系
 - `references/prediction-system.md` — 预判生命周期
 - `references/prediction-error-classification.md` — 复盘错误分类
-- `references/backtest-guide.md` — 历史回测方法论（89天，方向60.7%）
+- `references/backtest-guide.md` — 回测方法论（目标=次日收盘相对前收，90日窗口；旧 60.7% baseline 不可用于校准）
 - `references/candidate-pool-refresh.md` — 候选池月度刷新
 - `references/data-sources.md` — MCP 工具参数与数据格式
 
 ### 执行层 mi-skill
-- `references/rules.md` — 165 条技术规则库（8类）
+- `references/rules.md` — 140 条技术规则库（8类）
 - `references/dual-framework-analysis.md` — Serenity + mi-skill 双框架方法论
 - `references/eastmoney-api-patterns.md` — 东财/腾讯/新浪 API 模式与兜底
 - `references/prediction-tracking-workflow.md` — 预测跟踪与复盘三步骤
@@ -243,6 +340,12 @@ Step 4  综合输出
 - `references/deep-research-workflow.md` — 深度主题扫描工作流
 - `references/robotics-value-chain.md` — A股机器人产业链图谱（15股/7层）
 - `scripts/serenity_scorecard.py` — 可重复打分脚本
+
+### 文档、契约与测试
+- `docs/output-contract.md` — 操作层字段、推导规则与校验
+- `docs/testing.md` — 逻辑测试 vs 预测有效性评估、golden fixture、自评不可复现说明
+- `scripts/docs_consistency.py` — 规则/候选/权重/命令路径一致性 lint
+- `scripts/test_core_engine.py` — 核心逻辑/边界/集成/属性测试
 
 ---
 

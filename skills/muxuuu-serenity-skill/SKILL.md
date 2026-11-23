@@ -39,6 +39,21 @@ For theme scans, rank the supply-chain layers before ranking companies. Start wi
 
 For deep theme scans, avoid quick-answer behavior. When tools and runtime allow, build a candidate universe of at least 20 companies and inspect at least 25 sources before final ranking. If the run is shorter or tool-limited, label the answer as an initial pass and state which source checks remain.
 
+## Research depth contract (I4)
+
+There are two explicit modes; do not blur them:
+
+| Mode | Company target | Source target | Budget | Claim level |
+|------|----------------|---------------|--------|-------------|
+| `quick_scan` | 8 (initial screen) | 5 | ≤5 data calls / ~30s daily flow | `initial_pass` only |
+| `deep_research` | minimum 20 | minimum 25 | dedicated budget | `verified` allowed |
+
+Every theme answer must carry `research_depth`, `evidence_coverage`, `claim_level`, and
+`missing_evidence` (the quant helper is `scripts/research_depth.py`). A quick scan must
+never be written as "verified"; list the source checks still missing. A deep research
+answer that has not met 20 companies / 25 sources must downgrade its claim to
+`initial_pass` instead of padding the source count.
+
 ## Request router
 
 Classify the request, then work in the matching mode.
@@ -95,6 +110,7 @@ Run this workflow for theme scans, current opportunities, and candidate rankings
    - Keep scarce-layer priority and company priority separate. Strong earnings momentum can rank below a tighter supply-chain layer.
    - For every final top candidate, say exactly what part of the value chain it constrains or sits closest to.
    - Use `scripts/serenity_scorecard.py` for repeatable scoring when Python is available and the user wants a score.
+   - The scorecard JSON output includes `schema_version` and `engine_profile`, a stable company-level profile (`chokepoint/evidence/order_validation/competitive_position/rerate_potential`) that can be written to `~/.hermes/data/company_profiles.json` for the quant engine to consume. Do not let sector beta stand in for company alpha.
 
 8. **Explain what could go wrong**
    - Describe the clearest situations that would show the idea is weak or wrong.

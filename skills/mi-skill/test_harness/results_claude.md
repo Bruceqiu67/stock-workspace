@@ -1,5 +1,10 @@
 # SKILL 测试报告 — Claude (mimo-v2.5)
 
+> ⚠️ 历史自评，**不可复现**，不得作为回归基线或预测有效性证据。
+> 依赖仓库中不存在的 `output/book_skeleton.md`；场景由执行者事后构造，无重复实验/数据版本。
+> 规则数量以 `references/rules.md` 实际的 140 条为准；逻辑回归见 `scripts/test_core_engine.py`，
+> 预测有效性见 `scripts/forward_validation.py` 与 `skills/three-framework-analyst/scripts/backtest.py`。详见 `docs/testing.md`。
+
 执行时间: 2026-07-03
 测试执行者: Claude Code (AI)
 

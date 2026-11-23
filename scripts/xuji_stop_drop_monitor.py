@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-许继电气(000400) 止跌信号监控脚本
+⚠️ 遗留示例 / LEGACY EXAMPLE ONLY — 不可用于真实交易信号。
+本脚本是早期单票止跌提醒示例，不消费 market_state / filter_policy /
+output_contract；其中的价位与操作建议已过期。真实信号以 candidate_scanner.py
+落盘的 operation/portfolio_plan 为准。
+
+许继电气(000400) 止跌信号监控脚本（历史参考）
 检测到止跌信号时输出提醒信息，否则输出空字符串（静默）
 """
 import urllib.request
@@ -132,11 +137,11 @@ def main():
 🔔 触发信号：
 {signal_descs}
 
-💡 建议操作：
+💡 建议操作（示例，不可直接执行）：
 • 当前处于空头排列，仅作为短线反弹信号
-• 可在20-22元区间小仓试探（不超过5%）
-• 严格止损：跌破20元无条件止损
-• 反弹至MA20(22.38元)以上考虑减仓
+• 仓位、入场区间、止损与目标价必须由 output_contract.py 按当日 ATR/支撑压力重算
+• 本脚本中的历史价位已过期，不再作为交易依据
+• 若需真实信号，请使用 candidate_scanner.py 的 operation 字段
 
 ⏰ 触发时间：{now.strftime('%Y-%m-%d %H:%M:%S')}"""
     

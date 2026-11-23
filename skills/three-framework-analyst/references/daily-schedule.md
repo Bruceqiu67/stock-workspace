@@ -51,10 +51,10 @@
         cron: 1ee1017ed106
 
 16:00  🔄 收盘复盘报告 (LLM + 4 skills)
-        复盘: tracker.py review --date {yesterday} → 复盘昨日 recap 预判
+        复盘: prediction_tracker.py review --date {yesterday} → 复盘昨日 recap 预判
         分析: 今日实际走势 + 持仓表现 + 方向轮动
         产出: 收盘复盘PDF → 飞书
-        预判: tracker.py record --type recap  ← 预判明日
+        预判: prediction_tracker.py record --type recap  ← 预判明日
         cron: 54e63b84a4b4
 
         ── [以上为每日固定任务，以下为月度任务] ──
@@ -78,15 +78,28 @@
 
 预判文件存储路径：`~/.hermes/data/predictions/daily/{today}.json`
 
-每条预判记录格式：
+每条预判记录格式（追加式，旧版本由 `superseded_by` 标记）：
 ```json
 {
-  "id": "pred_20260713_001",
-  "date": "2026-07-13",
-  "type": "recap",              // recap=明日预判（唯一类型）
-  "prediction": { ... },
-  "actual": null,
-  "accuracy": null,
+  "id": "pred_20261123_recap_01",
+  "schema_version": "1.1",
+  "rubric_version": "1.0",
+  "revision": 1,
+  "supersedes": null,
+  "date": "2026-11-23",
+  "target_date": "2026-11-24",
+  "trading_day": true,
+  "type": "recap",
+  "direction_label": "震荡",
+  "base_scenario": "...", "base_prob": 60,
+  "opt_scenario": "...", "opt_prob": 20,
+  "pes_scenario": "...", "pes_prob": 20,
+  "support": 3300, "resistance": 3380,
+  "reviewed": false,
+  "review_score": null,
+  "error_type": null,
+  "actual_outcome": null,
+  "data_source": "market_snapshots+manual",
   "provider": "deepseek-v4-flash"
 }
 ```

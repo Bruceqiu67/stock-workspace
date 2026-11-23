@@ -10,83 +10,54 @@
 
 在输出完「明日预判」后，立即用以下方式记录：
 
-**方式 A — execute_code（推荐）**：
-```python
-from hermes_tools import terminal
-import json, datetime
+> ⚠️ 不要再手工拼 JSON 写 `accuracy` 字段。唯一入口是
+> `prediction_tracker.py record`；它负责追加式 revision、`target_date`、
+> `schema_version/rubric_version`、概率校验与旧字段迁移。
 
-today = datetime.date.today().isoformat()
-entry = {
-    "id": f"pred_{datetime.date.today().strftime('%Y%m%d')}_001",
-    "date": today,
-    "type": "market_direction",
-    "prediction": {
-        "summary": "探底回升收小阴/小阳",  # ← 替换为实际预判摘要
-        "base_scenario": "探底回升收小阴/小阳",  # ← 基准情景
-        "base_probability": 65,
-        "optimistic_scenario": "直接反弹收阳",
-        "optimistic_probability": 20,
-        "pessimistic_scenario": "继续中阴下跌",
-        "pessimistic_probability": 15,
-        "support_level": 3200,  # ← 实际支撑位
-        "resistance_level": 3250,  # ← 实际压力位
-        "key_observation": "科创50抗跌"  # ← 关键判断依据
-    },
-    "actual": None,
-    "accuracy": None,
-    "provider": "deepseek-v4-flash",
-    "provider_index": 0,
-    "created_at": datetime.datetime.now().isoformat(timespec="minutes"),
-    "notes": ""
-}
-
-# 读取已有记录
-import os, pathlib
-data_dir = pathlib.Path(os.environ.get("HERMES_HOME", pathlib.Path.home() / ".hermes")) / "data" / "predictions" / "daily"
-data_dir.mkdir(parents=True, exist_ok=True)
-
-path = data_dir / f"{today}.json"
-records = json.loads(path.read_text()) if path.exists() else []
-records.append(entry)
-path.write_text(json.dumps(records, ensure_ascii=False, indent=2))
-```
-
-**方式 B — terminal**（简单场景，不依赖 execute_code）：
+**方式 A — terminal / execute_code 调用同一 CLI（推荐）**：
 ```bash
-python3 ~/.hermes/data/predictions/tracker.py record \
+python3 ~/.hermes/scripts/prediction_tracker.py record \
+  --type recap \
   --summary "探底回升收小阴/小阳" \
-  --base-scenario "探底回升收小阴/小阳" \
-  --base-prob 65 \
-  --opt-scenario "直接反弹收阳" \
-  --opt-prob 20 \
-  --pes-scenario "继续中阴下跌" \
-  --pes-prob 15 \
-  --support 3200 \
-  --resistance 3250 \
+  --direction 偏多 \
+  --base-scenario "探底回升收小阴/小阳" --base-prob 65 \
+  --opt-scenario "直接反弹收阳" --opt-prob 20 \
+  --pes-scenario "继续中阴下跌" --pes-prob 15 \
+  --support 3200 --resistance 3250 \
   --observation "科创50抗跌" \
+  --data-source "manual" \
   --provider "deepseek-v4-flash"
 ```
 
-> **注意**：如果当日已有预判记录（如 cron 晨间报告已记录），新预判会追加到同一日期的 records 数组中，不覆盖。
+> **记录语义（P5）**：同一天同 `type` 重跑不会覆盖历史，而是 `revision+1`，
+> 旧记录写 `superseded_by`，新记录写 `supersedes`；`target_date` 缺失时按
+> 交易日历取下一交易日，显式传入非交易日会顺延并标记 `target_date_adjusted`。
+> 三情景概率必须各 0-100 且总和 100；默认 60/20/20 会标记
+> `probability_source=default_60_20_20`。`list --history` 可查看被替代版本。
 
 ### Step 2: 收盘后或下次分析时复盘
 
 当用户要求复盘或下次启动分析时：
 
 ```bash
-python3 ~/.hermes/data/predictions/tracker.py review
+# 复盘指定预判文件（推荐）
+python3 ~/.hermes/scripts/prediction_tracker.py review --date 2026-11-23
+
+# 不指定日期时，复盘最近一个存在未复盘记录的日期文件
+python3 ~/.hermes/scripts/prediction_tracker.py review
 ```
 
 这会：
-1. 自动拉取上证指数实时数据
-2. 对比今日每一条预判的实际表现
-3. 计算方向分/情景分/区间分/综合分
-4. 更新记录文件
+1. 按记录中的 `target_date` 拉取目标交易日实际指数日K（缺失时用下一交易日）
+2. 对比每一条预判的实际表现
+3. 计算方向分/区间分/情景分/综合分
+4. 写回 `reviewed/review_score/error_type/actual_outcome` 等规范字段
+5. 自动迁移旧 `accuracy` 字段（报告会标注口径差异）
 
 ### Step 3: 查看准确率报告
 
 ```bash
-python3 ~/.hermes/data/predictions/tracker.py report
+python3 ~/.hermes/scripts/prediction_tracker.py report
 ```
 
 输出示例：
@@ -128,32 +99,27 @@ python3 ~/.hermes/data/predictions/tracker.py report
 
 **真实 bug 案例**：2026-07-21 的收盘复盘因 2026-07-20 文件不存在（API 挂起导致 C 轮没跑），误用 2026-07-17 的预判复盘 7/20 的走势。
 
-## 评分规则（两套模式）
+## 评分规则（唯一 rubric，RUBRIC_VERSION = 2.0）
 
-### 模式A：tracker.py review 命令（3维度，满分各1.0）
-
-| 维度 | 满分 | 规则 |
-|------|:----:|------|
-| 方向分 | 1.0 | 预判涨/跌 vs 实际涨/跌，一致=1.0，相反=0.0 |
-| 情景分 | 1.0 | **当前为占位符** — tracker.py 中 scenario_score 固定为 1.0，未实现真实情景判断 |
-| 区间分 | 1.0 | 收盘价在预判支撑~压力区间内=1.0，偏差<0.5%=0.7，偏差<1%=0.4，更大=0.0 |
-| 综合 | (方向+情景+区间)/3 × 100 | 转为百分制 |
-
-**注意**：tracker.py 的 cmd_review 中 `scenario_score` 始终返回 1.0（未实现情景匹配逻辑），实际综合分 ≈ (方向 + 1.0 + 区间) / 3 × 100。
-
-### 模式B：收盘复盘 cron 场景G（2维度，满分各50）
-
-收盘复盘 cron `54e63b84a4b4`（16:00 运行）使用简化版评分：
+`prediction_tracker.py review` 是唯一评分入口；报告只消费它写回的字段。
 
 | 维度 | 满分 | 规则 |
 |------|:----:|------|
-| 方向分 | 50 | 预判涨跌方向 vs 实际涨跌方向。一致=50，不一致=0 |
-| 区间分 | 50 | 收盘在预判支撑~压力之间=50，偏离按幅度扣分 |
-| 综合 | 方向 + 区间 | 满分100 |
+| 方向分 | 50 | 偏多正确：实际涨 > +0.5%；偏空正确：实际跌 < -0.5%；震荡正确：\|实际\| ≤ 1.5%；弱反弹：0~+1.0% 满分，>+1.0% 得35。方向相反=0，落在边界内=25 |
+| 区间分 | 30 | 支撑/压力都存在时：实际高低点落在区间内=30，轻微越界=15，明显越界=0；**缺失支撑/压力时记 N/A，不默认给分** |
+| 情景分 | 20 | 三情景概率必须各 0-100 且总和=100；按实际落点计算多分类 Brier 分数 `BS=Σ(p_c-o_c)^2`，情景分 = `20 × (1 - BS/2)` |
+| 综合 | 0-100 | 已评分维度原始分之和；同时输出 `score_coverage`（已评分维度满分/100）与 `confidence` |
+
+关键约定：
+
+- **概率参与评分**：`brier_score` 与 `predicted_probabilities` 会写入复盘记录；概率和不为 100 时 `scenario_status=invalid_probabilities`、情景分 N/A。
+- **不再有固定 15/20 分兜底**：区间或情景缺失时对应维度不进入总分，`score_coverage` 降低，避免“只判方向也拿 85 分”。
+- **方向标签优先结构化**：记录里的 `direction_label` 优先；缺失时才用关键词分类，且已补充“冲高回落/低开高走/先跌后涨”等混合表述规则。
+- 错误分类阈值与 `prediction-error-classification.md` 一致：方向 0.5%、震荡 1.5%。
 
 ## 文件位置
 
-- 记录脚本: `~/.hermes/data/predictions/tracker.py`
+- 记录脚本: `~/.hermes/scripts/prediction_tracker.py`
 - 每日记录: `~/.hermes/data/predictions/daily/YYYY-MM-DD.json`
 - Cron prompt（收盘复盘）: `~/.hermes/cron/jobs.json` → job id `54e63b84a4b4`
 - 工作流参考: `references/prediction-tracking-workflow.md`（本文件）

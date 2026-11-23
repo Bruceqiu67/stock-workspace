@@ -11,7 +11,7 @@
 │   ├── daily/               # 逐日预判（每次出预判自动写入）
 │   │   ├── 2026-07-13.json
 │   │   └── ...
-│   └── tracker.py           # record/review/report/list 工具
+│   └── 工具：仓库 scripts/prediction_tracker.py（record/review/report/list）
 └── portfolio/               # 持仓状态
     └── current.json         # 当前持仓（cron fec5a277200a, 15:10 更新）
 ```

@@ -22,7 +22,8 @@ category: finance
 你采用"四维资金流分析框架"，从宏观到微观，层层递进：
 
 **第一维：市场环境（宏观）**
-趋势定位（牛市缓涨急跌=洗盘，熊市缓跌急涨=诱多）、情绪温度（涨停家数/炸板率/成交量）、资金类型（机构/游资/量化）
+趋势定位（牛市缓涨急跌=洗盘，熊市缓跌急涨=诱多）、情绪温度（涨停/跌停家数、炸板率、涨跌家数、中位数涨幅、总成交额）、资金类型（机构/游资/量化）。
+情绪温度由 `scripts/market_snapshot.py` 的全市场宽度指标计算：上涨占比 35 + 中位数涨幅 20 + 涨跌停平衡 20 + 炸板率 15 + 成交额分档 10，输出 0-100 情绪分与 `冰点/偏冷/中性/偏暖/过热` 分档；缺失时明确标注，不用热股代理冒充全市场。
 
 **第二维：板块轮动（中观）**
 主线识别（持续获资金关注的板块）、轮动节奏（主线强化 vs 轮动炒作）、资金切换（高位→低位板块流向）
@@ -52,8 +53,11 @@ category: finance
 | 状态 | 特征 | 策略基调 |
 |:----|:-----|:--------|
 | **正常/震荡** | 上证在20日线上方，单日振幅<2% | 正常轮动，选方向做个股 |
-| **恐慌/趋势下行** | 连续2天放量下跌，创业板单日-5%+，候选池90%飘绿 | 守为主，不做新开仓，等缩量止跌 |
-| **反弹/右侧启动** | 缩量见底后放量阳线，板块普涨 | 优先加仓持仓中相对强势的个股，其次选新方向 |
+| **恐慌/趋势下行** | 连续2天放量下跌，或创业板单日-5%+，或上证-2%+且候选池收红率≤20%，或市场宽度极弱 | 守为主，不做新开仓，等缩量止跌 |
+| **反弹/右侧启动** | 指数仍在MA20下方，上证+1.5%/创业板+2.5%，候选池收红率≥70% | 优先加仓持仓中相对强势的个股，其次选新方向 |
+| **未知/数据不足** | 指数/MA20/候选广度/量能关键输入缺失或过期 | 不输出方向性开仓结论，只列数据缺口 |
+
+> 量化状态机（`scripts/market_state.py`）是基线，不是最终判断：关键输入缺失时返回 `UNKNOWN`，禁止用默认值当成正常市场。完整的三框架分析仍需结合产业逻辑与资金流验证。
 
 ### 恐慌模式下的分析要点
 
@@ -69,6 +73,20 @@ category: finance
 1. **缩量**：成交量较恐慌日萎缩50%以上
 2. **不创新低**：连续2个交易日最低价高于恐慌日最低价
 3. **站上5日线**：收盘价站上5日均线
+
+> 量化层由 `scripts/market_state.py::check_stabilization()` 逐项计算，返回每项数值、通过与否和未通过原因。恐慌态下，未通过三条件的候选一律抑制买入标签（改为 `OBSERVE_DEFENSE_PANIC_UNCONFIRMED`），只输出观察/防守，禁止“一边说严禁开仓、一边给买入评级”。
+
+### 持仓风控必须消费市场状态（S4）
+
+`scripts/portfolio_monitor.py` 不再只按固定止损线告警：
+
+- **正常/反弹态**：保留硬止损（跌破止损线、浮亏>10%）纪律。
+- **恐慌态**：不机械执行止损；按“绝对风险底线 → 相对强度 → 企稳三条件”判断。
+  相对强度在候选池前 1/3 且未企稳时输出“防守观察”，后 1/3 输出“优先减仓”。
+- **任何状态**都保留绝对风险底线：跌破止损线 8% 以上，或浮亏达到 -20%，直接 critical。
+- 每条告警显示三项依据：距止损、相对排名、缩量比率（`actual_ratio` vs 0.50 阈值）。
+- 组合目标暴露、单票目标权重与 ENTER/ADD/HOLD/REDUCE/EXIT 调仓建议由
+  `scripts/portfolio_construction.py` 写入持仓报告。
 
 ## 常见误区
 
@@ -95,7 +113,7 @@ category: finance
 - **所有数据管道同时失效**：本 session 遇到了 MCP eastmoney 全线 error、curl 到新浪/东方财富 timeout、browser_navigate 到中国财经网站 CDP timeout。但 web_search 仍然正常工作，premarket.json 和 market_snapshots 文件数据完整。在这样的极端场景下：premarket.json（外围+指数）→ market_snapshots/{latest}.json（热股明细替代板块资金流）→ web_search（新闻催化）→ 出简报。不需要任何实时 API 也能产出一份可用报告。详见 `references/premarket-briefing-workflow.md`
 - **portfolio_monitor 已改为 always exit 0** — `portfolio_monitor.py` was changed from `sys.exit(1 if alarm_count > 0 else 0)` to `sys.exit(0)`. Alarm indicators (red/circle) are printed to stdout but no longer cause a non-zero exit. Cron treats exit 0 as success regardless of alarm count. If the script still shows last_status=error, check that the exit code change has been applied.
 - **portfolio_monitor 港股支持** — PORTFOLIO dict 现可包含港股，用 `hk` 前缀（如 `"hk01810": {...}`）。qt.gtimg.cn API 解析函数已扩展为三段式前缀判断（sh/sz/hk），不加此分支会导致港股数据 code_full 映射错误，行情全为 N/A。
-- **候选池中持续被过滤的高价股降低扫描成功率** — 如长川科技(300+元)、芯源微(360+元)等常年价格超硬过滤门(>100元)的股票，每日扫描必被过滤。保留它们在CANDIDATES字典中会：(1)浪费API请求(占用batch slots导致其他股票获取失败)，(2)降低总成功率。2026-07-28原始43只仅20/43成功，移除2只高价股+精简后39/39全部成功。建议每轮月度刷新时，检查`filtered.price_high`记录，将连续3次以上被过滤的股票移出预定义列表。
+- **候选池中持续被过滤的高价股降低扫描成功率** — 高价股是否淘汰由 `scripts/filter_policy.py` 统一决定：观察池价格硬上限 150 元、>100 元只做排序惩罚；交易池硬上限 100 元。被惩罚/淘汰的标的进入 `filtered.near_miss` 并记录原因；月度刷新时检查 near-miss 与连续被过滤记录，再决定移出观察池，而不是继续用脚本里的写死阈值。
 - **持仓数据同步三件套：脚本→JSON→Memory** — 当用户报告交易（如"中科我清仓了"），必须同步更新三处：(1) `portfolio_monitor.py` 的 PORTFOLIO dict（增删改代码+股数+成本），(2) `portfolio/current.json`（移除条目+重算 total_cost），(3) memory（更新持仓描述）。遗漏任一会导致报告数据不一致。current.json 的 price 字段在非交易日可设为 null。总投入计算：sum(cost × shares)。**用户说「我说错了」纠正持仓时，先用 clarify 给出选项（删除/改股数/改成本/都改）确认正确值再动三件套，不要猜**；多只一起纠正时逐条确认后一次性重算。**实战细节（2026-08 验证）**：(a) current.json 重算 total_cost 必须用全量 cost_map（code → (cost, shares)）重新求和，不要用"旧 total + 新增金额"累加——旧值可能含历史误差；(b) 改完脚本后必须运行 `python3 scripts/portfolio_monitor.py` 验证跑通且新股票出现在输出中，这是数据管道完整性的最终校验；(c) memory 接近上限（2200 chars）时，新持仓条目用最简格式（代码+股数+成本+止损），必要时先精简其他过期条目再写入。
 - **web_search (DDGS) 可能永久挂起** — The DDGS library v9.14.4 has a bug where `ThreadPoolExecutor.shutdown(wait=True)` blocks forever when all 5 engine HTTP requests time out (wikipedia, grokipedia, google, yahoo, brave all time out simultaneously). This hangs web_search for 30+ minutes until gateway idle timeout kills the session. The fix: a 30s timeout wrapper was added to `plugins/web/ddgs/provider.py::search()` using a separate `ThreadPoolExecutor` + `shutdown(wait=False)`. If web_search hangs are still observed, check that the DDGS provider has the timeout wrapper applied.
 - **MCP 000001 返回平安银行非上证指数**：`mcp-eastmoney get_stock_quote(code="000001")` 返回的是 平安银行 个股，不是上证指数（二者代码相同但 MCP server 优先返回个股）。要查上证指数需改用腾讯 API 或 web_search
@@ -126,6 +144,7 @@ category: finance
 1. 先用 `serenity-perspective` 风格 + `muxuuu-serenity-skill` 方法论做产业链研究
 2. 再用 `mi-skill` 做资金流验证和技术确认
 3. 输出格式：Serenity 产业链结论 → 资金流验证 → 技术买卖点 → 综合操作建议
+4. 综合操作建议必须落到 `scripts/output_contract.py` 的字段：入场区间、止损、目标1/2、仓位、失效条件、有效期；研究评级与交易动作分开，数据降级/恐慌未企稳时只给 `NO_TRADE/OBSERVE`。
 
 **数据加速**：当 Hermes 已配置 mcp-eastmoney MCP 时，Phase 2 的数据采集可压缩到 1-2 次 MCP 工具调用完成（`sector_fund_flow` 板块排行 + `main_fund_rank` 资金排行 + `get_stock_quote` 个股行情），无需 curl/浏览器。
 
@@ -174,7 +193,12 @@ category: finance
    - 如果是方向选股/候选池分析 → 切换为「行业模式」（跳过DCF/三情景估值，专注赛道评估）
    - 如果是单一个股 → 完整7步流程（含三情景估值+镜子测试）
 
-4. **联合研判**：共识→推荐 / 分歧→标注双方观点+调和建议
+4. **联合研判**：共识→推荐 / 分歧→按 `scripts/arbitration.py` 的裁决协议输出
+   - **恐慌态**：风控一票否决；未通过企稳三条件 → `DEFEND_NO_NEW_BUY`；产业逻辑不能覆盖破位/未企稳。
+   - **正常态**：产业逻辑做准入、技术做时机；产业看多但技术破位 → `WATCH_WAIT_TECH_REPAIR`，不立即买入。
+   - **反弹态**：相对强度优先；候选池前1/3 → `ADD_RELATIVE_STRENGTH`，否则 `WAIT_CONFIRMATION`。
+   - **未知态**：`NO_DIRECTIONAL_ACTION`，不输出方向性开仓结论。
+   - 输出必须包含 `conflict_type / decision / priority / basis / evidence_needed / confidence`，并写入复盘统计。
 
 ### 输出格式
 
@@ -202,23 +226,29 @@ category: finance
 
 ## 个股筛选硬过滤条件
 
-在双框架打分前，先过**三道硬过滤门**，不合格的直接淘汰，不做深度分析：
+在双框架打分前，先过**三道硬过滤门**。阈值统一由 `scripts/filter_policy.py` 提供，
+观察池与交易池、不同市场状态使用不同上限；脚本不再写死 100 元/70%。
 
 ### 硬过滤门1：绝对价格
-- 如果用户上一轮已拒绝"位置太高"的标的（如中天科技 61元），新一轮候选标的绝对价格必须**显著低于**上一轮
-- 一般中线配置，绝对价格 >100元 需额外谨慎；>200元 除非是茅台/宁德时代这类公认龙头，否则直接排除
+- 观察池：>150 元硬排除；>100 元只做排序惩罚并进入 `filtered.near_miss`。
+- 交易池：>100 元硬排除；>80 元做排序惩罚。
+- 如果用户上一轮已拒绝"位置太高"的标的（如中天科技 61元），新一轮候选标的绝对价格必须**显著低于**上一轮。
 
 ### 硬过滤门2：相对位置
-- 计算候选标的 90 日相对位置：(当前价 - 90日最低) / (90日最高 - 90日最低) × 100%
-- 如果相对位置 > 70%，视为"位置太高"，直接淘汰
-- 优先选择相对位置 < 40% 的标的
+- 计算候选标的 **52 周相对位置**：(当前价 - 52周最低) / (52周最高 - 52周最低) × 100%
+- 常规：≥70% 硬淘汰；60%-70% 只做排序惩罚；<40% 优先。
+- 恐慌态：硬上限收紧到 60%，避免在下跌中继接飞刀；反弹态可放宽到 75%。
+- 被淘汰/惩罚的原因写入 `filtered.near_miss`，不再静默消失。
+- ⚠️ 不得用 30 日窗口冒充 52 周；位置只在技术分计一次，产业分不重复奖励。
 
 ### 硬过滤门3：技术形态
-- 必须先获取真实 K 线数据，检查：
+- 必须先获取真实日K（至少 120 根，目标 250 根）与周K（至少 20 根），检查：
   - MA5/MA10/MA20/MA60 排列是否健康
+  - 周线趋势（周线定方向：站上周MA20 且周MA5≥周MA10）
   - 最近 5 日成交量是否萎缩或异常放大
   - 是否有破位下跌信号（放量长阴、跌破关键均线）
 - 技术形态不合格的，即使产业逻辑再好，也不推荐
+- 周K缺失时只能标记为“技术窗口不足”，不能当作中性评分继续推荐
 
 ## 板块扫描工作流
 
@@ -231,7 +261,7 @@ category: finance
 5. **再验证资金流向**
 6. **最后双框架打分**
 
-- **方向级淘汰**：如果一个方向内所有候选股的均线均为空头排列（MA5<MA10<MA20），说明该方向处于系统性调整中，整方向放弃
+- **方向级淘汰**：如果一个方向内所有候选股的均线均为空头排列（MA5<MA10<MA20），说明该方向处于系统性调整中，整方向放弃。该检查由 `scripts/filter_policy.py::direction_health()` 执行，候选的买入标签会改为 `OBSERVE_DIRECTION_BEARISH`，且不进入组合层。
 
 ## 上下文纪律（关键）
 
@@ -332,7 +362,7 @@ web_search / 热股情绪代理法  →  最低精度兜底
 - `references/dual-system-scoring-methodology.md` — 自动评分公式（技术分/产业链分/催化情绪分权重+公式+Python骨架+验证用例），用于自动化双体系评分开发
 - `references/candidate-refresh-workflow.md` — 手动候选池刷新工作流（MCP数据采集→三框架评估→代码更新→验证→状态记录）。当月度刷新 cron 超出 1-7 日窗口期时的完整手动替代路径
 - `references/dual-system-deep-dive-format.md` — 用户说「进一步看看排名前N」「深度分析前3」时的输出模板。含周线全景、五维评分矩阵、入场区间+止损+目标的实战格式
-- `references/rules.md` — 165条技术规则库（8类）
+- `references/rules.md` — 140条技术规则库（8类）
 - `references/dual-framework-analysis.md` — Serenity + mi-skill 双框架组合分析方法论
 - `references/eastmoney-api-patterns.md` — 东方财富/腾讯/新浪 API 模式、字段映射、兜底方案
 - `references/sina-finance-api-practice.md` — Sina Finance API 实战（GBK编码、字段映射）

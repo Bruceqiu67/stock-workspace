@@ -7,6 +7,22 @@ import json, os, subprocess, sys, re
 from datetime import date, datetime
 from pathlib import Path
 
+try:
+    from trading_calendar import (
+        freshness as calendar_freshness,
+        is_trading_day as calendar_is_trading_day,
+        previous_trading_day,
+    )
+except ImportError:  # 日历模块缺失时退回日历昨天，并在输出中标注
+    calendar_freshness = None
+    calendar_is_trading_day = None
+    previous_trading_day = None
+
+try:
+    from market_data_adapter import fetch_tencent_quotes
+except ImportError:
+    fetch_tencent_quotes = None
+
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -24,32 +40,20 @@ data = {
 
 
 def fetch_tencent(codes):
-    """腾讯行情"""
-    url = f"http://qt.gtimg.cn/q={','.join(codes)}"
-    try:
-        r = subprocess.run(["curl", "-s", "--connect-timeout", "8", url],
-                          capture_output=True, timeout=15)
-        raw = r.stdout.decode("gbk", errors="replace")
-    except Exception as e:
-        errors.append(f"tencent fail: {e}")
+    """腾讯行情（解析统一走 market_data_adapter）。"""
+    if fetch_tencent_quotes is None:
         return {}
-
-    result = {}
-    for line in raw.strip().split(";"):
-        if "~" not in line or len(line) < 40:
-            continue
-        parts = line.split("~")
-        try:
-            name = parts[1]
-            result[name] = {
-                "price": float(parts[3]),
-                "change_pct": float(parts[32]) if len(parts) > 32 and parts[32] else 0,
-                "high": float(parts[33]) if len(parts) > 33 and parts[33] else 0,
-                "low": float(parts[34]) if len(parts) > 34 and parts[34] else 0,
-            }
-        except (ValueError, IndexError):
-            continue
-    return result
+    quotes = fetch_tencent_quotes(codes, min_fields=40)
+    return {
+        quote.get("name", ""): {
+            "price": quote.get("price", 0),
+            "change_pct": quote.get("change_pct", 0),
+            "high": quote.get("high", 0),
+            "low": quote.get("low", 0),
+        }
+        for quote in quotes.values()
+        if quote.get("name")
+    }
 
 
 def fetch_sina(codes, prefix="gb_"):
@@ -131,25 +135,65 @@ def main():
     # 2. 亚太 (新浪国际指数)
     data["asia"] = fetch_sina_int(["nikkei", "kospi", "hangseng", "hscei"])
 
-    # 3. A股昨日收盘（如果有快照就读取）
-    snap_path = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "data" / "market_snapshots" / f"{today}.json"
-    if not snap_path.exists():
-        # 取前一天
+    # 3. A股上一交易日收盘（如果有快照就读取）
+    # I3：周一盘前必须找上一交易日（通常是周五），不能用“日历昨天”。
+    snapshots_dir = (
+        Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+        / "data" / "market_snapshots"
+    )
+    previous_day = (
+        previous_trading_day(today) if previous_trading_day else None
+    )
+    if previous_day is None:
         from datetime import timedelta
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        snap_path = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "data" / "market_snapshots" / f"{yesterday}.json"
-    if snap_path.exists():
+        previous_day = (date.today() - timedelta(days=1)).isoformat()
+
+    today_is_trading = (
+        calendar_is_trading_day(today) if calendar_is_trading_day else True
+    )
+    candidate_paths = [
+        snapshots_dir / f"{previous_day}.json",    # 盘前默认读上一交易日
+    ]
+    if today_is_trading:
+        candidate_paths.insert(0, snapshots_dir / f"{today}.json")
+    snap_path = next((p for p in candidate_paths if p.exists()), None)
+    if snap_path is not None:
         with open(snap_path, "r", encoding="utf-8") as f:
             snap = json.load(f)
-            data["a_share_yesterday"] = {
-                "date": snap.get("date"),
-                "indices": snap.get("indices"),
-                "hot_total_amount_wan": snap.get("hot_total_amount_wan"),
-            }
+        source_date = snap.get("date") or snap_path.stem
+        fresh = (
+            calendar_freshness(source_date, today, allow_previous=True)
+            if calendar_freshness else
+            {"status": "unknown", "is_stale": source_date != today,
+             "data_age_days": None, "data_age_trading_days": None}
+        )
+        data["a_share_yesterday"] = {
+            "date": source_date,
+            "expected_date": previous_day,
+            "indices": snap.get("indices"),
+            "hot_total_amount_wan": snap.get("hot_total_amount_wan"),
+            "breadth": snap.get("breadth"),
+            "freshness": fresh,
+        }
+    else:
+        data["a_share_yesterday"] = {
+            "date": None,
+            "expected_date": previous_day,
+            "indices": None,
+            "freshness": {
+                "status": "missing",
+                "is_stale": True,
+                "data_age_days": None,
+                "data_age_trading_days": None,
+            },
+        }
 
     # 4. 输出
     output = {
         "date": today,
+        "target_date": today,
+        "as_of": data["a_share_yesterday"].get("date") or previous_day,
+        "data_freshness": data["a_share_yesterday"].get("freshness"),
         "captured_at": now,
         "data": data,
         "errors": errors if errors else None,
@@ -187,7 +231,9 @@ def main():
         sh = idx.get("上证指数", {})
         cy = idx.get("创业板指", {})
         kc = idx.get("科创50", {})
-        print(f"  🇨🇳 昨收 A股:")
+        fresh = ay.get("freshness") or {}
+        print(f"  🇨🇳 昨收 A股 (数据日 {ay.get('date') or '?'}"
+              f"{'，状态 ' + str(fresh.get('status')) if fresh else ''}):")
         print(f"     上证: {sh.get('price','-'):>8} ({sh.get('change_pct',0):+.2f}%)")
         print(f"     创业板: {cy.get('price','-'):>6} ({cy.get('change_pct',0):+.2f}%)")
         print(f"     科创50: {kc.get('price','-'):>6} ({kc.get('change_pct',0):+.2f}%)")

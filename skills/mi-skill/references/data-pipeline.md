@@ -20,11 +20,11 @@
 ~/.hermes/
 ├── data/
 │   ├── market_snapshots/      # 收盘快照（15:05 cron）
-│   │   └── YYYY-MM-DD.json    # 7指数 + 8热股 + 成交额
+│   │   └── YYYY-MM-DD.json    # 7指数 + 8热股 + 全市场宽度/情绪分 + 成交额
 │   ├── predictions/
 │   │   ├── daily/             # 预判记录（每次出预判后写入）
 │   │   │   └── YYYY-MM-DD.json
-│   │   └── tracker.py         # record/review/report/list
+│   │   └── 工具：仓库 scripts/prediction_tracker.py（record/review/report/list）
 │   ├── portfolio/
 │   │   └── current.json       # 当前持仓状态（15:10 cron 更新）
 │   ├── premarket/
@@ -54,6 +54,14 @@ curl 实时拉取                →  腾讯/新浪/东方财富 API
 web_search / 热股情绪代理法  →  最低精度兜底
 ```
 
+## 交易日语义与数据新鲜度（I3）
+
+- `scripts/trading_calendar.py` 提供 `is_trading_day / previous_trading_day / next_trading_day / freshness`。
+- **周一盘前读上一交易日（通常是周五），不是“日历昨天（周日）”**；节假日可在 `~/.hermes/data/trading_calendar.json` 配置 `holidays` 与 `extra_trading_days`。
+- 所有缓存读取（盘前快照、市场状态、预判复盘）都要校验目标日期；输出必须携带 `as_of`、`data_age_days`、`data_age_trading_days`、`freshness`、`expected_previous_trading_day`。
+- `freshness.status`：`fresh`（同日）/ `previous_trading_day`（盘前读昨收，属预期）/ `stale`（早于上一交易日）/ `future` / `missing`；`stale=true` 时下游必须降级并显示数据缺口。
+- 候选扫描的 `data_freshness`、市场快照的 `freshness`、市场状态的 `freshness`、盘前 JSON 的 `a_share_yesterday.freshness` 使用同一套语义。
+
 ## 缓存 vs 实时判断
 
 - 用户问「收盘怎么样」「昨天」→ 读缓存
@@ -79,9 +87,11 @@ web_search / 热股情绪代理法  →  最低精度兜底
 - 用户手动清仓/加仓 → 脚本仍显示旧持仓，因为它是从硬编码股票列表拉行情，不知道用户交易
 
 **portfolio_monitor exit code 行为**：
-- 脚本最后 `sys.exit(1 if alarm_count > 0 else 0)` — 有止损/浮亏>10%告警时 exit(1)
-- Cron 把 exit 1 标记为 "error"，但数据已成功写入 `current.json`，不影响下游使用
-- 这不是 bug，cron 的 error 状态可以忽略
+- 脚本最后固定 `sys.exit(0)` — 告警只写入 stdout 与 `current.json`，不再用 exit(1) 表示“有告警”。
+- 因此 cron 的 status=ok 不代表没有风险；必须读取 `stocks[].alarm_level` 与
+  `target_portfolio.validation_errors`。
+- 恐慌态告警不再机械按止损线，而是“绝对风险底线 + 相对强度 + 企稳条件”三层判断；
+  `current.json` 会写入 `market_regime / alarm_bases / target_weight / rebalance_action`。
 
 **应对**：距上次更新超过1个交易日时，用 MCP `get_stock_quote` 逐只拉当前价，重算浮盈浮亏。持股数通过 `market_val ÷ last_price` 取整推算。用户说「清仓了」后，手动从脚本股票列表移除该标的。
 
@@ -96,9 +106,13 @@ web_search / 热股情绪代理法  →  最低精度兜底
 ### 候选池（candidates JSON）
 
 `candidates/YYYY-MM-DD.json` 由 `candidate_scanner.py` cron 在 15:15 采集。注意：
-- 脚本有硬编码候选列表（~43-54只覆盖9-10个方向），随版本更新可能增减
-- 硬过滤门会淘汰价格>100元或52周相对位置>70%的标的
-- 如果次日发现候选池大小出入（如54→43只），可能是脚本版本不同，检查脚本内的 `CANDIDATES` 字典
+- 候选来源分两层：`scripts/candidate_universe.py` 的重点观察池（9 个方向、39 只）+ 可选的全市场宇宙 `~/.hermes/data/candidate_universe.json`
+- 缺少全市场宇宙配置时，输出 `universe.status=watchlist_only`、`selection_bias_risk=high`，报告不得称为“全市场选股”
+- 过滤阈值由 `scripts/filter_policy.py` 统一提供（观察池/交易池分开），被过滤标的进入 `filtered.near_miss` 并记录原因
+- 方向内全部空头排列时输出 `direction_veto` 与 `direction_health`；买入标签改为 `OBSERVE_DIRECTION_BEARISH`
+- 组合层 `portfolio_plan` 给出目标暴露/现金/目标权重/`adjustments`；每只候选的 `operation` 给出 `entry_zone/stop/target_1/target_2/position_size/invalidation/valid_until/trade_action`
+- 数据日期：顶层 `date` 是扫描日，`target_date/as_of` 是数据所属交易日；`data_freshness` 与每只候选的 `data_freshness` 都应检查。K线早于上一交易日时 `action_label=DATA_STALE`、`rankable=false`
+- 候选池大小的权威来源是 `candidate_universe.py` 的 `WATCHLIST`，文档不再写死数量
 
 ## 注意
 

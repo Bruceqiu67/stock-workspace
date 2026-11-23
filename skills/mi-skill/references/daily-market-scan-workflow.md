@@ -97,7 +97,7 @@ hot_stocks = {
 在输出明日预判后，**自动执行**以下操作记录预判：
 
 ```python
-# 保存预判记录到 ~/.hermes/data/predictions/tracker.py
+# 保存预判记录：仓库 scripts/prediction_tracker.py record --type recap
 # 由 Hermes 在输出预判后自动调用 execute_code 或 terminal 执行
 ```
 
@@ -110,6 +110,15 @@ hot_stocks = {
 在完成所有数据采集后，按以下结构输出**全市场三框架分析报告**。注意此模板与 mi-skill 主 SKILL.md 中的「持仓诊断」「个股推荐」等模板不同——这是**全市场视角的日报**，用户看到的是"今天市场怎么了"而非"我的股票怎么了"。
 
 #### 报告结构顺序
+
+报告头部必须标注研究深度与证据覆盖：
+
+```
+research_depth: quick_scan | deep_research
+evidence_coverage: 0.00-1.00
+claim_level: initial_pass | verified
+missing_evidence: [ ... ]
+```
 
 ```
 # 📊 三框架全市场分析报告 · YYYY年MM月DD日（周X）
@@ -151,13 +160,27 @@ hot_stocks = {
   - 🔴 红色：警示（放量暴跌、北向流出、小盘恐慌杀跌）
 - **明日预判必须有概率标记**：基准情景(65%) / 乐观(20%) / 悲观(15%)，让用户理解这不是单点预测而是情景分析。
 
+#### 研究深度标注（I4）
+
+本工作流的 4-5 次工具调用 / 30 秒预算对应 **`quick_scan`（快速扫描）**，不是
+`deep_research`。报告必须显式携带：
+
+- `research_depth: quick_scan`
+- `evidence_coverage`（公司/来源覆盖度，按 `scripts/research_depth.py` 计算）
+- `claim_level: initial_pass`
+- `missing_evidence`（还需核实的公司、公告、订单、来源清单）
+
+快速扫描可以给“方向初筛/待验证线索”，但**不得**写成“产业链已验证/证据充分”。
+需要“已验证”结论时，另起深度研究：至少 20 家公司、25 个来源，并输出证据分级。
+禁止用“工具调用少”来冒充深度研究，也禁止为了凑来源数重复引用同一来源。
+
 #### 报告产出速度要求
 
-- 数据采集：控制在 4-5 次工具调用以内
+- 数据采集：控制在 4-5 次工具调用以内（属于 quick_scan 预算）
 - 优先顺序：指数(1次curl) → 热股(1次批量curl) → 外围(browser扫描) → web_search(可选，1次)
 - 若 push2 板块API失败或 browser 页面无法提取表格 → **立即切换到热股情绪代理法**，不要在死路上浪费工具调用次数
 - 全部数据分析时间：不超过 30 秒（从开始到输出完整报告）
-- **如果某一步超时（如 web_search >15秒），跳过该步，基于已有数据做判断即可**
+- **如果某一步超时（如 web_search >15秒），跳过该步，基于已有数据做判断即可，并在 `missing_evidence` 中注明**
 
 #### 报告交付（可选）
 

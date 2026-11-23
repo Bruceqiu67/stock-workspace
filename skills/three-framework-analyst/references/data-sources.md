@@ -10,7 +10,7 @@
 ├── candidates/YYYY-MM-DD.json          — 当日候选池
 └── predictions/
     ├── daily/YYYY-MM-DD.json           — 逐日预判记录
-    └── tracker.py                      — 记录/复盘/报告工具
+    └── 工具：仓库 scripts/prediction_tracker.py（记录/复盘/报告）
 ```
 
 ## Level 2：MCP 工具详细参数

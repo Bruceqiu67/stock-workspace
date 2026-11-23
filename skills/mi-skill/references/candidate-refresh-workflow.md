@@ -96,12 +96,15 @@ CANDIDATES = {
 }
 ```
 
-### C. 更新顶部注释行
+### C. 更新观察池定义
 
-```
-# ── 预定义候选列表（覆盖 9 个方向，共 42 只）──
-# 2026-07-28 更新：摘要说明
-```
+候选清单不再写在 `candidate_scanner.py` 顶部，而是维护在
+`scripts/candidate_universe.py`：
+
+- `WATCHLIST`：当前 9 个方向 / 39 只观察池标的；
+- `SECTOR_META`：每个方向的 `inclusion_reason/included_at/exit_criteria`；
+- 数量以 `scripts/candidate_universe.py` 为准，`scripts/docs_consistency.py`
+  会校验 README/架构/刷新文档中的数字。不要再手写“42 只/43 只”。
 
 ## 第四步：运行验证
 

@@ -7,7 +7,7 @@
 仅场景G（收盘复盘）需要记录预判，使用 `--type recap` 参数：
 
 ```bash
-python3 ~/.hermes/data/predictions/tracker.py record \
+python3 ~/.hermes/scripts/prediction_tracker.py record \
   --type recap \
   --summary "明日走势预判" \
   --base-scenario "..." --base-prob 65 \
@@ -82,7 +82,12 @@ candidates/{today}.json  # 收盘后有数据
   - 业绩确定性(0-2) — 半年内业绩确定性如何？
   - 估值合理性(0-2) — PE是否合理？
 
-**Step 3: 双框架数值评分（0-20分）**
+**Step 3: 双框架数值评分（0-20分，展示层）**
+
+> 0-20 分是规范 0-100 分的展示换算（canonical / 5），不是第二套独立权重。
+> 规范分、权重与阈值见 `scripts/scoring_config.py` 和 `dual-system-scoring-methodology.md`。
+> 本表只用于人工快速阅读，不得据此另建一套排名。
+
 对候选池内通过硬过滤的股票评分：
 
 | 维度 | 满分 | 评分标准 |
@@ -188,17 +193,17 @@ skill_view(name="feishu-report-delivery")
 
 **Step 1: 运行复盘**
 ```bash
-python3 ~/.hermes/data/predictions/tracker.py review
+python3 ~/.hermes/scripts/prediction_tracker.py review
 ```
 
 **Step 2: 查看报告**
 ```bash
 # 月度/累计统计（默认）
-python3 ~/.hermes/data/predictions/tracker.py report
+python3 ~/.hermes/scripts/prediction_tracker.py report
 
 # 按预判类型分组分析 —— 快速定位框架的强项和弱项
 # 输出：偏多/偏空/震荡各类型的方向正确率 + 错误类型分布
-python3 ~/.hermes/data/predictions/tracker.py report --by-type
+python3 ~/.hermes/scripts/prediction_tracker.py report --by-type
 ```
 
 **Step 3: 输出复盘结论**
@@ -243,27 +248,24 @@ predictions/daily/{yesterday}.json       → 昨日复盘预判（type=recap，�
 > ❌ 常见错误：昨日预测文件不存在或没有 recap 记录时，误读了前天的 recode，导致复盘错位。
 > ✅ 正确做法：没有就是没有，跳过并标注，不要回退去找更早的。
 
-**重要：每次复盘后必须将准确率写回昨日预判的 JSON 文件**，否则 tracker.py report 看不到累计数据。
+**重要：每次复盘后必须通过 `prediction_tracker.py review --date` 写回规范字段**，否则 `prediction_tracker.py report` 看不到累计数据。
 
 ```bash
 # 读取昨日 predictions 文件中 type=recap 的记录
 # 拉取今日指数数据对比评分
-python3 ~/.hermes/data/predictions/tracker.py review --date {yesterday}
+python3 ~/.hermes/scripts/prediction_tracker.py review --date {yesterday}
 ```
 
-如果手动计算评分（不调 review），则需：
-```python
-# 手动写入 accuracy 字段到 yesterday.json
-import json, pathlib
-p = pathlib.Path.home() / '.hermes/data/predictions/daily'
-yesterday = (pathlib.Path.home() / '...')  # 计算昨日日期
-f = p / f'{yesterday}.json'
-data = json.loads(f.read_text())
-for r in data:
-    if r.get('type') == 'recap' and r.get('accuracy') is None:
-        r['accuracy'] = {'direction_score': X, 'level_score': Y, 'overall': Z}
-        r['actual'] = {'sh_index_close': 3913.79, 'sh_index_change_pct': -2.06}
-f.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+复盘必须通过 `review --date` 写回规范字段（`reviewed/review_score/error_type/actual_outcome`），
+不要再手工写入 `accuracy` 字段。旧记录中的 `accuracy` 会在 `review` / `report` 时自动迁移，
+并在报告中标注“旧口径迁移、不完全可比”。
+
+```bash
+# 复盘指定预判文件并写回
+python3 ~/.hermes/scripts/prediction_tracker.py review --date {yesterday}
+
+# 只看计算结果、不写回
+python3 ~/.hermes/scripts/prediction_tracker.py review --date {yesterday} --dry-run
 ```
 输出示例：
 ```
@@ -271,8 +273,9 @@ f.write_text(json.dumps(data, ensure_ascii=False, indent=2))
    上证: 3913.79 (-2.06%)  振幅: 2.08%
 
    [pred_20260710_001] 明日走势：震荡上行
-     方向分: 0.0  |  区间分: 0.0
-     🎯 综合准确率: 0/100
+     方向分: 0.0  |  区间分: N/A  |  情景分: 6.2 (Brier=1.38)
+     覆盖度: 0.70  |  置信度: medium
+     🎯 综合准确率: 6.2/100
 ```
 
 **Step 2: 分析今日实际走势**
@@ -313,7 +316,7 @@ f.write_text(json.dumps(data, ensure_ascii=False, indent=2))
 
 **Step 4: 记录明日预判（--type recap）**
 ```bash
-python3 ~/.hermes/data/predictions/tracker.py record \
+python3 ~/.hermes/scripts/prediction_tracker.py record \
   --type recap \
   --summary "明日走势预判" \
   --base-scenario "..." --base-prob 65 \

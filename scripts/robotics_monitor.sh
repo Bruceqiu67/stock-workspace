@@ -1,4 +1,7 @@
 #!/bin/bash
+# ⚠️ 遗留示例 / LEGACY EXAMPLE ONLY — 不可用于真实交易信号。
+# 已被 candidate_scanner.py + portfolio_construction.py + output_contract.py 取代。
+# buy/stop 为占位 0.0；保留仅作历史参考，接入真实持仓前必须重写。
 # 机器人板块三股监控脚本 v3
 
 DATA=$(curl -sL -H "Referer: https://finance.sina.com.cn" \
@@ -64,7 +67,8 @@ for code, info in stocks.items():
         continue
     
     chg = (cur - yest) / yest * 100 if yest > 0 else 0
-    loss = (cur - info['buy']) / info['buy'] * 100
+    # 占位 buy=0.0 时不做浮亏计算，避免除零；真实使用前必须填入成本价。
+    loss = (cur - info['buy']) / info['buy'] * 100 if info['buy'] > 0 else 0
     
     if amount >= 100000000:
         amt_str = f"{amount/100000000:.1f}亿"

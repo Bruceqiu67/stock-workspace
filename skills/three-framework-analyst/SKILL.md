@@ -13,7 +13,7 @@ tags: [finance, a-share, trading, analysis]
 **核心原则**：
 1. 优先读本地数据缓存（`~/.hermes/data/`），缓存不存在才实时拉取
 2. 实时拉取按优先级：MCP工具 → curl API → web_search
-3. 预判记录统一在场景G（收盘复盘）完成，使用 `tracker.py record --type recap`。场景A（大盘分析）是纯信息报告，不做预判
+3. 预判记录统一在场景G（收盘复盘）完成，使用 `prediction_tracker.py record --type recap`。场景A（大盘分析）是纯信息报告，不做预判
 4. 数据不可得时标注「数据暂缺」，不编造
 
 ## 数据源优先级
@@ -24,8 +24,8 @@ Level 1: 本地数据缓存  (~/.hermes/data/)
   ├── portfolio/current.json                — 持仓实时状态
   ├── premarket/YYYY-MM-DD.json             — 盘前外围数据
   ├── candidates/YYYY-MM-DD.json            — 当日候选池
-  ├── predictions/daily/YYYY-MM-DD.json     — 历史预判记录
-  └── predictions/                          — tracker.py 复盘数据
+  ├── predictions/daily/YYYY-MM-DD.json     — 历史预判记录（target_date/schema_version/rubric_version）
+  └── predictions/                          — prediction_tracker.py 的 review/report 数据
 
 Level 2: MCP 工具 (mcp-eastmoney)
   ├── sector_fund_flow(kind="industry")      → 行业板块排行+资金流向
@@ -43,6 +43,13 @@ Level 3: curl API
 Level 4: web_search（慢，5-15秒）
   └── 产业逻辑验证、新闻催化、财报搜索
 ```
+
+## 研究深度与输出契约
+
+- **研究分为两档**（`scripts/research_depth.py`）：`quick_scan` 是日更/盘中快速筛选（≤5 次取数、约 30 秒），只能声明 `claim_level=initial_pass` 并列出 `missing_evidence`；`deep_research` 至少 20 家公司、25 个来源，才能声明 `verified`。每份报告都应携带 `research_depth / evidence_coverage / claim_level`。
+- **操作建议必须落到 `scripts/output_contract.py` 的字段**：`entry_zone / stop / target_1 / target_2 / position_size / invalidation / valid_until / confidence`。`research_rating` 与 `trade_action` 分离；数据降级、恐慌未企稳、方向淘汰、仲裁否决时只输出 `NO_TRADE/OBSERVE`。
+- **组合层**（`scripts/portfolio_construction.py`）给出目标暴露、单票/方向上限与调仓建议；个股仓位不得绕过组合约束。
+- 完整 schema 见 `docs/output-contract.md`；逻辑测试与预测有效性的边界见 `docs/testing.md`。
 
 ## 场景路由
 
@@ -63,7 +70,7 @@ Level 4: web_search（慢，5-15秒）
 1. 先检查 ~/.hermes/data/ 下对应日期数据是否存在
 2. 按场景路由到 references/scenarios.md 中的对应流程
 3. 按流程顺序执行（如果多个数据源需按优先级）
-4. 执行完毕后检查是否需要调用 tracker.py record
+4. 执行完毕后检查是否需要调用 prediction_tracker.py record
    - 场景G（收盘复盘）→ `--type recap`
    - 场景A（大盘分析）不做预判记录
 
@@ -81,20 +88,22 @@ Level 4: web_search（慢，5-15秒）
 
 ```bash
 # 复盘
-python3 ~/.hermes/data/predictions/tracker.py report              # 月度统计
-python3 ~/.hermes/data/predictions/tracker.py report --by-type    # 按类型分组+偏差分析
+python3 ~/.hermes/scripts/prediction_tracker.py report              # 月度统计
+python3 ~/.hermes/scripts/prediction_tracker.py report --by-type    # 按类型分组+偏差分析
 
 # 候选池状态
 cat ~/.hermes/data/candidates/refresh_state.json                  # 上次刷新时间
 
-# 回测
-python3 ~/.hermes/data/backtest/backtest.py                       # 重新跑回测
+# 回测（仓库内脚本，不是旧 ~/.hermes/data/backtest 路径）
+python3 skills/three-framework-analyst/scripts/backtest.py
 ```
 
 ## Pitfalls
 
-### 不要用简单规则判断市场状态
-用户在回测分析时明确纠正：震荡/趋势的判断不能靠「最近 N 天涨跌方向」这类几行规则。市场状态检测需要完整的产业逻辑+资金流向+多维度验证。当需要判断市场状态时，用完整的三框架流程，不要拍脑袋写规则。
+### 市场状态机是确定性基线，不是唯一判断
+`scripts/market_state.py` 负责把指数涨跌、MA20、量能、候选池广度和市场宽度合成为 `NORMAL/PANIC/REBOUND/UNKNOWN`，并在关键输入缺失时返回 `UNKNOWN`。它解决的是“可复现的基线”，不能替代产业逻辑与资金流的完整验证；但也不允许在脚本之外再拍脑袋写一套“最近 N 天涨跌”的临时规则。
+- 当状态为 `UNKNOWN` 时，报告必须列出缺失输入，不得写成“正常震荡”。
+- 当状态为 `PANIC` 时，必须消费 `arbitration_rules` 与 `check_stabilization()` 的结果，不能只看指数跌幅。
 
 ### 新建 cron 必须显式设置 deliver
 Cron 创建时 `deliver` 默认为 `local`，输出只存 `~/.hermes/cron/output/`，**不会推送到任何聊天平台**。用户根本收不到报告。

@@ -13,6 +13,8 @@ import json
 import sys
 from typing import Any, Dict, Tuple
 
+SCORECARD_SCHEMA_VERSION = "1.0"
+
 WEIGHTS = {
     "demand_inflection": 15,
     "architecture_coupling": 10,
@@ -104,7 +106,29 @@ def score(data: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
     else:
         verdict = "Early lead or low priority"
 
+    # 稳定 JSON 契约：供 scripts/company_profiles.py::profile_from_serenity_scorecard
+    # 直接消费，把公司级研究映射为评分引擎的 company alpha。
+    def rating(key: str) -> float:
+        return float(factor_details.get(key, {}).get("rating", 0.0))
+
+    engine_profile = {
+        "schema_version": "1.0",
+        "code": data.get("ticker", ""),
+        "name": data.get("company", ""),
+        "source": "serenity_scorecard",
+        "specificity": "company",
+        "as_of": data.get("as_of", ""),
+        "chokepoint": rating("chokepoint_severity"),
+        "evidence": rating("evidence_quality"),
+        "order_validation": rating("catalyst_timing"),
+        "competitive_position": rating("supplier_concentration"),
+        "rerate_potential": rating("valuation_disconnect"),
+        "scorecard_final_score": round(final_score, 2),
+        "verdict": verdict,
+    }
+
     result = {
+        "schema_version": SCORECARD_SCHEMA_VERSION,
         "ticker": data.get("ticker", ""),
         "company": data.get("company", ""),
         "market": data.get("market", ""),
@@ -116,6 +140,7 @@ def score(data: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
         "penalty_details": penalty_details,
         "kill_switches": data.get("what_could_weaken_view", data.get("kill_switches", [])),
         "evidence": data.get("evidence", []),
+        "engine_profile": engine_profile,
     }
     return result, verdict
 

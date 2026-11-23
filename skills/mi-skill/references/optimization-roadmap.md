@@ -10,7 +10,7 @@
 行情(腾讯API)            mi-skill 资金流           CLI 文本
 K线(腾讯API)             serenity-perspective       PDF 报告
 资金流向(东财API)         serenity-skill             cron 推送
-外围+新闻(web_search)    165条规则库
+外围+新闻(web_search)    140条规则库
 
 ## 优化项优先级
 
@@ -24,10 +24,18 @@ K线(腾讯API)             serenity-perspective       PDF 报告
 ### ✅ P0 · 预测跟踪与复盘（已完成）
 
 - 预测无反馈闭环 → **已搭建完整预测跟踪系统**
-- 方案：`~/.hermes/data/predictions/tracker.py`（record / review / report / list）
+- 方案：仓库 `scripts/prediction_tracker.py`（record / review / report / list）
 - 每日预判自动记录到 daily/YYYY-MM-DD.json，收盘后 review 命令三维度评分
 - 已写入 mi-skill 步骤8 强制执行
 - 详见 `references/prediction-tracking-workflow.md`
+
+### ✅ P1 · 前瞻收益 / IC / 分桶验证（已完成）
+
+- 方案：`scripts/forward_validation.py`
+- 读取 `~/.hermes/data/candidates/YYYY-MM-DD.json` 的历史评分快照，回填未来 1/5/20 日收益
+- 输出：rank IC 均值、正 IC 天数、Top-N 命中率、五分桶平均收益与单调性、按 market regime 分层表现
+- 严格防未来函数：评分只读历史快照，未来收益只读快照日之后的交易日
+- 结果：`~/.hermes/data/validation/forward_validation.json`
 
 ### ✅ P1 · 收盘数据自动采集（已完成）
 

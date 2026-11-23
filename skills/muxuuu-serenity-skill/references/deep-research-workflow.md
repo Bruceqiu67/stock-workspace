@@ -27,6 +27,11 @@ For a current theme scan, aim to complete these checks before the final answer:
 
 If tools or time prevent that standard, state the limitation and give a focused partial answer with an exact verification path.
 
+**Mode contract (I4)**: this 20-company / 25-source standard is `deep_research`. A daily
+4-5 call / 30s pass is `quick_scan` and must output `research_depth=quick_scan`,
+`claim_level=initial_pass`, and a `missing_evidence` list; it must not be written as
+“已验证/verified”. The quant helper is `scripts/research_depth.py`.
+
 ## Workflow
 
 ### 1. Scope the request

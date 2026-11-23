@@ -7,6 +7,13 @@
 
 每个测试都有明确的**操作指令**和**通过/失败标准**。
 
+> 可复现性声明（A4）：本文件是独立评测路线，不是仓库回归测试。它依赖
+> `output/book_skeleton.md` 等**未随仓库提供**的源材料，且测试场景由执行者事后
+> 构造，因此 `results_claude.md`/`auto_results.md` 的历史分数**不可复现**，
+> 不能作为“规则有效”或“预测有效”的证据。逻辑回归请用
+> `scripts/test_core_engine.py`，预测有效性请用 `scripts/forward_validation.py`
+> 与 `skills/three-framework-analyst/scripts/backtest.py`。详见 `docs/testing.md`。
+
 ---
 
 ## 准备工作
@@ -14,7 +21,7 @@
 执行此测试需要：
 
 1. `SKILL.md` — 当前的交易技术分析框架
-2. `rules.md` — 8类366条技术规则
+2. `rules.md` — 8类140条技术规则（以 `references/rules.md` 实际 `- **` 规则行为准，`scripts/docs_consistency.py` 会校验）
 3. 实时/历史市场数据（可从新浪财经、东方财富等公开API获取）
 
 ---
